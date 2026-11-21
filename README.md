@@ -73,8 +73,6 @@ Each worker progress message has a UUID `update_id`. `processed_updates` records
 
 ### Poison messages and retries
 
-### Poison messages and retries
-
 Malformed or permanently unprocessable progress messages are recorded in the PostgreSQL `dead_letters` table and acknowledged to prevent repeated delivery.
 
 Transient database failures are retried using a durable RabbitMQ retry queue with exponential backoff (1s, 2s, and 4s). After the configured retry limit, messages are moved to `provisioning.progress.dlq` for inspection and manual recovery.
