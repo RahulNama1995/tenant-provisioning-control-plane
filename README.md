@@ -7,8 +7,8 @@ A Python implementation of the take-home assignment: an asynchronous, multi-tena
 Requirements: Docker Engine and Docker Compose v2.
 
 ```bash
-git clone <YOUR_PUBLIC_REPOSITORY_URL>
-cd tenant-control-plane
+git clone https://github.com/RahulNama1995/tenant-provisioning-control-plane.git
+cd tenant-provisioning-control-plane
 docker compose up --build -d
 ```
 
@@ -73,7 +73,13 @@ Each worker progress message has a UUID `update_id`. `processed_updates` records
 
 ### Poison messages and retries
 
-Malformed or unknown-task messages are recorded in `dead_letters` and acknowledged so they do not block the queue. Database failures are negatively acknowledged with requeue. The consumer reconnects after broker failures. For a production deployment, replace immediate requeue with bounded retry queues and dead-letter exchange policies to avoid hot-looping on prolonged database outages.
+### Poison messages and retries
+
+Malformed or permanently unprocessable progress messages are recorded in the PostgreSQL `dead_letters` table and acknowledged to prevent repeated delivery.
+
+Transient database failures are retried using a durable RabbitMQ retry queue with exponential backoff (1s, 2s, and 4s). After the configured retry limit, messages are moved to `provisioning.progress.dlq` for inspection and manual recovery.
+
+The consumer reconnects after broker failures. Retry messages are published before the original message is acknowledged to reduce the risk of message loss.
 
 ### Scope
 
@@ -173,9 +179,46 @@ The worker progress queue accepts JSON messages of this shape:
 
 Use RabbitMQ's management UI (`http://localhost:15672`, guest/guest), select `provisioning.progress`, and publish the same JSON twice with the same `update_id` to demonstrate duplicate delivery. To demonstrate order tolerance, publish a `done` event and then an `in_progress` event for the same task (use distinct update IDs); the task remains terminal. For a reproducible manual test, use a real task UUID from `GET /tasks`.
 
-## Tests
+## Testing
 
-The integration tests use the PostgreSQL database configured by `DATABASE_URL`. They cover deploy lifecycle, outbox creation, duplicate and stale progress messages, state guards, destruction, and two simultaneous PATCH requests using the same version. Run them inside the running API container with `docker compose exec api make check`.
+The project includes automated tests covering tenant lifecycle management, concurrency, event processing, and failure recovery.
+
+### Test scenarios
+
+- Tenant creation, deployment, update, and destruction lifecycle.
+- Duplicate tenant slug prevention, including previously destroyed tenants.
+- Tenant state validation and invalid operations.
+- Optimistic locking and concurrent tenant updates.
+- Task state transitions and terminal-state immutability.
+- Duplicate progress event handling through idempotency.
+- Out-of-order progress event handling.
+- Concurrent worker progress delivery.
+- Worker failure handling and tenant recovery.
+- Transactional outbox behavior during broker outages.
+- Worker reconnection after RabbitMQ failures.
+- Poison message handling and dead-letter queues.
+- Bounded retries with exponential backoff.
+- Database outage and recovery.
+
+### Run automated tests
+
+```bash
+pytest -v
+```
+
+### Run code quality checks
+
+```bash
+ruff check .
+ruff format --check .
+bandit -r app worker -ll
+```
+
+### Run application smoke test
+
+```bash
+bash scripts/smoke_test.sh
+```
 
 ## Repository hygiene
 
