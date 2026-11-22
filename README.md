@@ -34,6 +34,13 @@ docker compose down
 
 To reset persisted data, use `docker compose down -v` (destructive).
 
+## Verify the application
+
+Check that all services are running:
+
+```bash
+docker compose ps
+
 ## Architecture
 
 ```mermaid

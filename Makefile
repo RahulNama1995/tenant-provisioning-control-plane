@@ -15,7 +15,7 @@ format:
 	ruff format .
 
 check:
-	ruff format .
+	ruff format --check .
 	ruff check .
-	bandit -q -r app worker
+	bandit -ll -r app worker
 	pytest --cov=app --cov=worker --cov-report=term-missing
