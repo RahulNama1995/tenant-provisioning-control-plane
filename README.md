@@ -40,6 +40,27 @@ Check that all services are running:
 
 ```bash
 docker compose ps
+```
+
+Verify the API health endpoint:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+Run the end-to-end lifecycle smoke test:
+
+```bash
+bash scripts/smoke_test.sh
+```
+
+The smoke test creates a tenant and waits for its lifecycle to complete automatically.
 
 ## Architecture
 
