@@ -6,7 +6,7 @@ down:
 	docker compose down
 
 test:
-	pytest --cov=app --cov=worker --cov-report=term-missing
+	python -m pytest --cov=app --cov=worker --cov-report=term-missing
 
 lint:
 	ruff check .
@@ -18,4 +18,4 @@ check:
 	ruff format --check .
 	ruff check .
 	bandit -ll -r app worker
-	pytest --cov=app --cov=worker --cov-report=term-missing
+	python -m pytest --cov=app --cov=worker --cov-report=term-missing
