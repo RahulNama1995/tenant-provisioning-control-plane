@@ -54,12 +54,16 @@ def declare_queues(channel):
 def publish_outbox_forever():
     """Poll committed outbox rows; publish confirms before marking them delivered."""
     retry_delay = 1.0
+
     while True:
+        conn = None
+
         try:
             conn = connection()
             channel = conn.channel()
             declare_queues(channel)
             channel.confirm_delivery()
+
             with SessionLocal() as db:
                 rows = (
                     db.execute(
@@ -71,23 +75,32 @@ def publish_outbox_forever():
                     .scalars()
                     .all()
                 )
+
                 for row in rows:
                     channel.basic_publish(
                         exchange="",
                         routing_key=TASK_QUEUE,
                         body=json.dumps(row.payload),
                         properties=pika.BasicProperties(
-                            delivery_mode=2, content_type="application/json"
+                            delivery_mode=2,
+                            content_type="application/json",
                         ),
                         mandatory=True,
                     )
                     row.published_at = utcnow()
+
                 db.commit()
-            conn.close()
+
             retry_delay = 1.0
+
         except Exception:
             log.exception("Outbox publishing failed; will retry")
             time.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, 30.0)
+
         else:
             time.sleep(1)
+
+        finally:
+            if conn is not None and conn.is_open:
+                conn.close()

@@ -4,7 +4,6 @@ import logging
 import random
 import time
 import uuid
-
 import pika
 
 from app.config import RABBITMQ_URL, TASK_QUEUE, TASK_DLQ
@@ -15,6 +14,82 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def validate_task_payload(body: bytes) -> dict:
+    """Parse and validate an incoming task message."""
+    task = json.loads(body)
+
+    if not isinstance(task, dict):
+        raise ValueError("Task payload must be a JSON object")
+
+    if not task.get("id") or not task.get("type"):
+        raise ValueError("Task must contain id and type")
+
+    return task
+
+
+def simulate_task_result(fail_rate: float) -> tuple[str, str | None]:
+    """Return a simulated terminal task status."""
+    if random.random() < fail_rate:
+        return "failed", "simulated provisioning failure"
+
+    return "done", None
+
+
+def process_task_message(
+    ch,
+    method,
+    body: bytes,
+    fail_rate: float,
+    min_delay_ms: int,
+    max_delay_ms: int,
+):
+    """Process one task message and publish its progress updates."""
+
+    try:
+        task = validate_task_payload(body)
+
+    except (json.JSONDecodeError, ValueError, TypeError):
+        logger.exception("Invalid/poison task message; sending to DLQ")
+        ch.basic_nack(method.delivery_tag, requeue=False)
+        return
+
+    try:
+        logger.info("Processing task %s (%s)", task["id"], task["type"])
+
+        def publish(status, error=None):
+            event = {
+                "update_id": str(uuid.uuid4()),
+                "task_id": task["id"],
+                "status": status,
+                "error": error,
+            }
+
+            ch.basic_publish(
+                exchange="",
+                routing_key="provisioning.progress",
+                body=json.dumps(event),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,
+                    content_type="application/json",
+                ),
+                mandatory=True,
+            )
+
+        publish("in_progress")
+
+        time.sleep(random.randint(min_delay_ms, max_delay_ms) / 1000)
+
+        status, error = simulate_task_result(fail_rate)
+        publish(status, error)
+
+        ch.basic_ack(method.delivery_tag)
+        logger.info("Completed task %s", task["id"])
+
+    except Exception:
+        logger.exception("Task processing failed")
+        raise
 
 
 def main():
@@ -86,57 +161,14 @@ def main():
                 )
 
             def callback(ch, method, properties, body):
-                try:
-                    task = json.loads(body)
-
-                    # Validate required task fields before processing.
-                    if not isinstance(task, dict):
-                        raise ValueError("Task payload must be a JSON object")
-
-                    if not task.get("id") or not task.get("type"):
-                        raise ValueError("Task must contain id and type")
-
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    logger.exception("Invalid/poison task message; sending to DLQ")
-                    ch.basic_nack(method.delivery_tag, requeue=False)
-                    return
-
-                try:
-                    logger.info(
-                        "Processing task %s (%s)",
-                        task["id"],
-                        task["type"],
-                    )
-
-                    publish(ch, task, "in_progress")
-
-                    time.sleep(
-                        random.randint(
-                            args.min_delay_ms,
-                            args.max_delay_ms,
-                        )
-                        / 1000
-                    )
-
-                    failed = random.random() < args.fail_rate
-
-                    publish(
-                        ch,
-                        task,
-                        "failed" if failed else "done",
-                        "simulated provisioning failure" if failed else None,
-                    )
-
-                    ch.basic_ack(method.delivery_tag)
-
-                    logger.info("Completed task %s", task["id"])
-
-                except Exception:
-                    logger.exception("Task processing failed")
-
-                    # Leave the delivery unacknowledged. Closing the connection
-                    # allows RabbitMQ to redeliver it.
-                    raise
+                process_task_message(
+                    ch,
+                    method,
+                    body,
+                    args.fail_rate,
+                    args.min_delay_ms,
+                    args.max_delay_ms,
+                )
 
             channel.basic_consume(
                 queue="provisioning.tasks",

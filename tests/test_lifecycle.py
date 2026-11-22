@@ -36,8 +36,6 @@ def test_duplicate_progress_is_idempotent_and_stale_is_ignored():
         assert apply_progress(db, update_id, task.id, "done") == "applied"
     with SessionLocal() as db:
         saved = db.get(ProcessedUpdate, update_id)
-        print("UPDATE ID:", update_id)
-        print("SAVED EVENT:", saved)
         assert saved is not None
     with SessionLocal() as db:
         assert apply_progress(db, update_id, task.id, "in_progress") == "duplicate"
@@ -370,3 +368,155 @@ def test_concurrent_progress_updates_are_serialized():
             assert saved_tenant.status == TenantStatus.active
         else:
             assert saved_tenant.status == TenantStatus.failed
+
+
+def test_successful_update_lifecycle():
+    with SessionLocal() as db:
+        tenant, deploy_task = create_tenant(db, "successful-update", "Original Name")
+
+    progress(deploy_task.id, "done")
+
+    with SessionLocal() as db:
+        active_tenant = db.get(Tenant, tenant.id)
+        initial_version = active_tenant.version
+
+        updated_tenant, update_task = update_tenant(
+            db,
+            tenant.id,
+            "Updated Name",
+            initial_version,
+        )
+
+        assert updated_tenant.status == TenantStatus.updating
+        assert updated_tenant.name == "Updated Name"
+        assert updated_tenant.version == initial_version + 1
+        assert update_task.type == TaskType.update
+        assert update_task.status == TaskStatus.accepted
+
+    assert progress(update_task.id, "in_progress") == "applied"
+    assert progress(update_task.id, "done") == "applied"
+
+    with SessionLocal() as db:
+        final_tenant = db.get(Tenant, tenant.id)
+        final_task = db.get(Task, update_task.id)
+
+        assert final_tenant.status == TenantStatus.active
+        assert final_tenant.version == initial_version + 2
+        assert final_task.status == TaskStatus.done
+
+
+def test_stale_version_does_not_update_tenant():
+    with SessionLocal() as db:
+        tenant, deploy_task = create_tenant(db, "stale-version", "Original")
+
+    progress(deploy_task.id, "done")
+
+    with SessionLocal() as db:
+        active_tenant = db.get(Tenant, tenant.id)
+        stale_version = active_tenant.version - 1
+
+        with pytest.raises(DomainError) as exc:
+            update_tenant(
+                db,
+                tenant.id,
+                "New Name",
+                stale_version,
+            )
+
+        assert exc.value.code == "tenant_version_conflict"
+
+    with SessionLocal() as db:
+        saved = db.get(Tenant, tenant.id)
+
+        assert saved.name == "Original"
+        assert saved.status == TenantStatus.active
+
+
+def test_unknown_task_progress_is_rejected():
+    unknown_task_id = uuid.uuid4()
+    update_id = uuid.uuid4()
+
+    with SessionLocal() as db:
+        with pytest.raises(ValueError, match="Unknown task"):
+            apply_progress(
+                db,
+                update_id,
+                unknown_task_id,
+                "done",
+            )
+
+    with SessionLocal() as db:
+        assert db.get(ProcessedUpdate, update_id) is None
+
+
+def test_invalid_progress_status_is_rejected():
+    with SessionLocal() as db:
+        tenant, task = create_tenant(db, "invalid-progress", "Invalid Progress")
+
+    update_id = uuid.uuid4()
+
+    with SessionLocal() as db:
+        with pytest.raises(ValueError, match="Invalid task status"):
+            apply_progress(
+                db,
+                update_id,
+                task.id,
+                "unknown_status",
+            )
+
+    with SessionLocal() as db:
+        saved_task = db.get(Task, task.id)
+
+        assert saved_task.status == TaskStatus.accepted
+        assert db.get(ProcessedUpdate, update_id) is None
+
+
+def test_progress_is_ignored_when_tenant_state_mismatches():
+    with SessionLocal() as db:
+        tenant, task = create_tenant(db, "state-mismatch", "State Mismatch")
+
+        tenant.status = TenantStatus.active
+        db.commit()
+
+    with SessionLocal() as db:
+        result = apply_progress(
+            db,
+            uuid.uuid4(),
+            task.id,
+            "done",
+        )
+
+        assert result == "stale"
+
+    with SessionLocal() as db:
+        saved_task = db.get(Task, task.id)
+        saved_tenant = db.get(Tenant, tenant.id)
+
+        assert saved_task.status == TaskStatus.accepted
+        assert saved_tenant.status == TenantStatus.active
+
+
+def test_failed_update_marks_tenant_failed():
+    with SessionLocal() as db:
+        tenant, deploy_task = create_tenant(db, "failed-update", "Before Update")
+
+    progress(deploy_task.id, "done")
+
+    with SessionLocal() as db:
+        active_tenant = db.get(Tenant, tenant.id)
+
+        updated_tenant, update_task = update_tenant(
+            db,
+            tenant.id,
+            "After Update",
+            active_tenant.version,
+        )
+
+    assert progress(update_task.id, "failed") == "applied"
+
+    with SessionLocal() as db:
+        saved_tenant = db.get(Tenant, tenant.id)
+        saved_task = db.get(Task, update_task.id)
+
+        assert saved_tenant.status == TenantStatus.failed
+        assert saved_task.status == TaskStatus.failed
