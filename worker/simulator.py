@@ -16,6 +16,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+VALID_TASK_TYPES = {"deploy", "update", "destroy"}
+
+
 def validate_task_payload(body: bytes) -> dict:
     """Parse and validate an incoming task message."""
     task = json.loads(body)
@@ -23,8 +26,13 @@ def validate_task_payload(body: bytes) -> dict:
     if not isinstance(task, dict):
         raise ValueError("Task payload must be a JSON object")
 
-    if not task.get("id") or not task.get("type"):
-        raise ValueError("Task must contain id and type")
+    if not task.get("id"):
+        raise ValueError("Task must contain id")
+
+    task_type = task.get("type")
+
+    if not isinstance(task_type, str) or task_type not in VALID_TASK_TYPES:
+        raise ValueError("Task type must be deploy, update, or destroy")
 
     return task
 
@@ -60,7 +68,12 @@ def process_task_message(
 
         def publish(status, error=None):
             event = {
-                "update_id": str(uuid.uuid4()),
+                "update_id": str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"tenant-provisioning:{task['id']}:{status}",
+                    )
+                ),
                 "task_id": task["id"],
                 "status": status,
                 "error": error,

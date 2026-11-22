@@ -174,7 +174,11 @@ curl -X DELETE http://localhost:8000/tenants/<tenant-id>
 
 ## Worker scenarios
 
-The default worker succeeds after a randomized 300–1200 ms delay. Restart it with a 100% failure rate:
+The default worker succeeds after a randomized 300–1200 ms delay.
+
+To reproduce a provisioning failure:
+
+**Terminal 1 — Start a worker with a 100% failure rate:**
 
 ```bash
 docker compose stop worker
@@ -229,15 +233,13 @@ The project includes automated tests covering tenant lifecycle management, concu
 ### Run automated tests
 
 ```bash
-pytest -v
+docker compose exec api make test
 ```
 
 ### Run code quality checks
 
 ```bash
-ruff check .
-ruff format --check .
-bandit -r app worker -ll
+docker compose exec api make check
 ```
 
 ### Run application smoke test

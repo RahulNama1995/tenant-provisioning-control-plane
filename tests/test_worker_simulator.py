@@ -21,6 +21,32 @@ def test_validate_valid_task_payload():
     }
 
 
+@pytest.mark.parametrize("task_type", ["deploy", "update", "destroy"])
+def test_validate_supported_task_types(task_type):
+    body = json.dumps(
+        {
+            "id": "task-123",
+            "type": task_type,
+        }
+    ).encode()
+
+    result = validate_task_payload(body)
+
+    assert result["type"] == task_type
+
+
+def test_validate_rejects_unsupported_task_type():
+    body = json.dumps(
+        {
+            "id": "task-123",
+            "type": "restart",
+        }
+    ).encode()
+
+    with pytest.raises(ValueError, match="Task type must be"):
+        validate_task_payload(body)
+
+
 @pytest.mark.parametrize(
     "body",
     [
@@ -247,3 +273,15 @@ def test_worker_configures_queues_and_starts_consuming():
     channel.basic_consume.assert_called_once()
     channel.start_consuming.assert_called_once()
     connection.close.assert_called_once()
+
+@pytest.mark.parametrize("task_type", [[], {}, 123, None])
+def test_validate_rejects_non_string_task_type(task_type):
+    body = json.dumps(
+        {
+            "id": "task-123",
+            "type": task_type,
+        }
+    ).encode()
+
+    with pytest.raises(ValueError, match="Task type must be"):
+        validate_task_payload(body)

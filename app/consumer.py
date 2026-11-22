@@ -80,7 +80,10 @@ def process_progress_message(ch, method, properties, body):
 
     # Step 3: Read the retry count.
     headers = properties.headers or {}
-    retry_count = int(headers.get("x-retry-count", 0))
+    try:
+        retry_count = int(headers.get("x-retry-count", 0))
+    except (TypeError, ValueError):
+        retry_count = 0
 
     # Step 4: Exhausted retries go to the progress DLQ.
     if retry_count >= MAX_PROGRESS_RETRIES:
@@ -151,6 +154,8 @@ def process_progress_message(ch, method, properties, body):
 
 def run_consumer():
     while True:
+        conn = None
+
         try:
             conn = connection()
             channel = conn.channel()
@@ -169,4 +174,12 @@ def run_consumer():
 
         except Exception:
             log.exception("Progress consumer disconnected; reconnecting")
-            time.sleep(2)
+
+        finally:
+            if conn is not None and conn.is_open:
+                try:
+                    conn.close()
+                except Exception:
+                    log.exception("Error closing progress consumer connection")
+
+        time.sleep(2)

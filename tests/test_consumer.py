@@ -116,6 +116,33 @@ def test_retry_delay_uses_exponential_backoff(rabbit_channel, rabbit_method):
     assert published_properties.expiration == str(consumer.BASE_RETRY_DELAY_MS * 2)
     assert published_properties.headers["x-retry-count"] == 2
 
+def test_invalid_retry_header_is_handled_safely(
+    rabbit_channel, rabbit_method
+):
+    properties = SimpleNamespace(
+        headers={"x-retry-count": "invalid"}
+    )
+
+    with (
+        patch.object(consumer, "SessionLocal"),
+        patch.object(
+            consumer,
+            "apply_progress",
+            side_effect=OperationalError(
+                "statement", {}, Exception("DB down")
+            ),
+        ),
+    ):
+        consumer.process_progress_message(
+            rabbit_channel, rabbit_method, properties, VALID_BODY
+        )
+
+    # The consumer should not crash or acknowledge a message
+    # without successfully scheduling its retry.
+    assert (
+        rabbit_channel.basic_publish.called
+        or rabbit_channel.basic_nack.called
+    )
 
 def test_exhausted_retries_are_sent_to_dlq(rabbit_channel, rabbit_method):
     properties = SimpleNamespace(headers={"x-retry-count": consumer.MAX_PROGRESS_RETRIES})

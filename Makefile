@@ -6,7 +6,7 @@ down:
 	docker compose down
 
 test:
-	python -m pytest --cov=app --cov=worker --cov-report=term-missing
+	DATABASE_URL=postgresql+psycopg://control:control@postgres-test:5432/control_plane_test python -m pytest --cov=app --cov=worker --cov-report=term-missing
 
 lint:
 	ruff check .
@@ -18,4 +18,4 @@ check:
 	ruff format --check .
 	ruff check .
 	bandit -ll -r app worker
-	python -m pytest --cov=app --cov=worker --cov-report=term-missing
+	DATABASE_URL=postgresql+psycopg://control:control@postgres-test:5432/control_plane_test python -m pytest --cov=app --cov=worker --cov-report=term-missing
